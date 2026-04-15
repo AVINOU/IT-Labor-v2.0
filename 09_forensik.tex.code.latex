@@ -1,0 +1,184 @@
+\chapter{Digitale Forensik und Incident Response}
+
+\section{Forensik-Grundprinzipien}
+
+\begin{table}[H]
+\centering
+\caption{Forensische Grundprinzipien}
+\begin{tabular}{|l|p{9cm}|}
+\hline
+\rowcolor{primaryblue!20}
+\textbf{Prinzip} & \textbf{Beschreibung} \\
+\hline
+Integrität & Beweise dürfen nicht verändert werden \\
+\hline
+Dokumentation & Jede Aktion muss lückenlos dokumentiert werden \\
+\hline
+Chain of Custody & Lückenlose Beweiskette vom Fund bis Gericht \\
+\hline
+Reproduzierbarkeit & Ergebnisse müssen reproduzierbar sein \\
+\hline
+Verhältnismäßigkeit & Nur notwendige Daten erheben \\
+\hline
+\end{tabular}
+\end{table}
+
+\section{Velociraptor -- DFIR Plattform}
+
+\begin{lstlisting}[language=bash, caption=Velociraptor Installation]
+# Velociraptor Server installieren
+wget https://github.com/Velocidex/velociraptor/releases/latest/\
+  download/velociraptor-v0.7.0-linux-amd64
+chmod +x velociraptor-v0.7.0-linux-amd64
+mv velociraptor-v0.7.0-linux-amd64 /usr/local/bin/velociraptor
+
+# Konfiguration generieren
+velociraptor config generate -i
+
+# Server starten
+velociraptor --config server.config.yaml frontend -v
+
+# Web-GUI: https://10.0.20.15:8889
+# Benutzer: admin / (gesetzt bei Konfiguration)
+\end{lstlisting}
+
+\begin{lstlisting}[language=bash, caption=Velociraptor VQL Queries]
+-- Alle laufenden Prozesse mit Netzwerkverbindungen
+SELECT Pid, Name, Exe, CommandLine, Username,
+       {SELECT * FROM connections()} AS Connections
+FROM pslist()
+WHERE Connections
+
+-- Persistenz-Mechanismen pruefen
+SELECT * FROM Artifact.Windows.Persistence.PermanentWMIEvents()
+
+-- Lateral Movement erkennen
+SELECT * FROM Artifact.Windows.EventLogs.Evtx()
+WHERE EventID IN (4624, 4625, 4648)
+AND TimeCreated > now() - 86400
+\end{lstlisting}
+
+\section{Hayabusa -- Windows Log Analyse}
+
+\begin{lstlisting}[language=bash, caption=Hayabusa Windows Event Log Analyse]
+# Hayabusa herunterladen
+wget https://github.com/Yamato-Security/hayabusa/releases/latest/\
+  download/hayabusa-2.x.x-linux-x64.zip
+unzip hayabusa-*.zip && chmod +x hayabusa
+
+# Regeln aktualisieren
+./hayabusa update-rules
+
+# Event Logs analysieren
+./hayabusa csv-timeline \
+  -d /path/to/evtx/ \
+  -o timeline.csv \
+  --min-level medium
+
+# Schnelle Zusammenfassung
+./hayabusa logon-summary -d /path/to/evtx/
+
+# Pivot auf spezifische Ereignisse
+./hayabusa search \
+  -d /path/to/evtx/ \
+  -r "Mimikatz" \
+  -o mimikatz_hits.csv
+\end{lstlisting}
+
+\section{Volatility 3 -- Memory Forensik}
+
+\begin{lstlisting}[language=bash, caption=Volatility 3 Memory Analyse]
+# Volatility 3 installieren
+git clone https://github.com/volatilityfoundation/volatility3.git
+cd volatility3 && pip3 install -r requirements.txt
+
+# RAM-Dump erstellen (Live-System)
+sudo avml /tmp/memory.lime
+
+# Prozesse analysieren
+python3 vol.py -f memory.lime windows.pslist
+python3 vol.py -f memory.lime windows.pstree
+
+# Netzwerkverbindungen
+python3 vol.py -f memory.lime windows.netstat
+
+# Injizierte DLLs finden
+python3 vol.py -f memory.lime windows.malfind
+
+# Credentials extrahieren
+python3 vol.py -f memory.lime windows.hashdump
+python3 vol.py -f memory.lime windows.lsadump
+
+# Dateien aus RAM extrahieren
+python3 vol.py -f memory.lime windows.dumpfiles \
+  --pid 1234 -o /tmp/extracted/
+\end{lstlisting}
+
+\section{Automatisierter IR-Workflow}
+
+\begin{lstlisting}[language=python, caption=Automatischer Incident Response Workflow]
+import subprocess
+import datetime
+import os
+import hashlib
+
+class IRWorkflow:
+    def __init__(self, case_id: str, target_ip: str):
+        self.case_id = case_id
+        self.target_ip = target_ip
+        self.timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.output_dir = f"/cases/{case_id}_{self.timestamp}"
+        os.makedirs(self.output_dir, exist_ok=True)
+
+    def collect_volatile_data(self):
+        """Volatile Daten sammeln"""
+        commands = {
+            "processes.txt": "ps auxf",
+            "network.txt": "ss -antup",
+            "users.txt": "who -a",
+            "open_files.txt": "lsof",
+            "arp_cache.txt": "arp -n",
+            "routes.txt": "ip route show"
+        }
+        for filename, cmd in commands.items():
+            result = subprocess.run(
+                cmd.split(), capture_output=True, text=True
+            )
+            with open(f"{self.output_dir}/{filename}", "w") as f:
+                f.write(result.stdout)
+        print(f"✅ Volatile Daten gesichert: {self.output_dir}")
+
+    def create_disk_image(self, device: str = "/dev/sda"):
+        """Forensisches Disk-Image erstellen"""
+        image_path = f"{self.output_dir}/disk_image.dd"
+        subprocess.run([
+            "dd", f"if={device}", f"of={image_path}",
+            "bs=4M", "status=progress", "conv=noerror,sync"
+        ])
+        # Hash berechnen
+        sha256 = hashlib.sha256()
+        with open(image_path, "rb") as f:
+            for chunk in iter(lambda: f.read(4096), b""):
+                sha256.update(chunk)
+        with open(f"{image_path}.sha256", "w") as f:
+            f.write(sha256.hexdigest())
+        print(f"✅ Disk-Image erstellt: {image_path}")
+
+    def generate_report(self):
+        """IR-Bericht generieren"""
+        report = f"""
+# Incident Response Report
+- Case ID: {self.case_id}
+- Target: {self.target_ip}
+- Timestamp: {self.timestamp}
+- Output: {self.output_dir}
+        """
+        with open(f"{self.output_dir}/IR_Report.md", "w") as f:
+            f.write(report)
+        print("✅ IR-Bericht generiert")
+
+# Verwendung
+ir = IRWorkflow("IR-2026-001", "10.0.30.10")
+ir.collect_volatile_data()
+ir.generate_report()
+\end{lstlisting}

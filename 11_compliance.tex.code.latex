@@ -1,0 +1,287 @@
+\chapter{Compliance: NIS2, ISO 27001 und BSI IT-Grundschutz}
+
+\section{NIS2-Richtlinie (EU 2022/2555)}
+
+\subsection{Überblick und Anforderungen}
+
+\begin{table}[H]
+\centering
+\caption{NIS2 -- Wichtige Anforderungen}
+\begin{tabular}{|l|p{5cm}|p{4cm}|}
+\hline
+\rowcolor{primaryblue!20}
+\textbf{Artikel} & \textbf{Anforderung} & \textbf{Umsetzung} \\
+\hline
+Art. 21 & Risikomanagement-Maßnahmen & ISMS einführen \\
+\hline
+Art. 21 & Incident Handling & SOC + IR-Plan \\
+\hline
+Art. 21 & Business Continuity & BCP + DRP erstellen \\
+\hline
+Art. 21 & Supply Chain Security & Lieferanten-Audit \\
+\hline
+Art. 21 & Verschlüsselung & TLS 1.3, AES-256 \\
+\hline
+Art. 21 & MFA & Für alle Systeme \\
+\hline
+Art. 23 & Meldepflicht 24h & CSIRT informieren \\
+\hline
+Art. 23 & Folgemeldung 72h & Detailbericht \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{NIS2 Compliance-Checkliste}
+
+\begin{lstlisting}[language=bash, caption=NIS2 Technische Massnahmen pruefen]
+#!/bin/bash
+# nis2_check.sh -- NIS2 Compliance Check
+
+echo "=== NIS2 Compliance Check ==="
+echo "Datum: $(date)"
+echo ""
+
+# 1. Verschluesselung pruefen
+echo "[1] Verschluesselung"
+openssl s_client -connect localhost:443 2>/dev/null | \
+  grep "Protocol\|Cipher"
+
+# 2. MFA pruefen
+echo "[2] MFA Status"
+grep -r "MFA\|2FA\|TOTP" /etc/pam.d/ 2>/dev/null | head -5
+
+# 3. Patch-Status
+echo "[3] Ausstehende Updates"
+apt list --upgradable 2>/dev/null | wc -l
+
+# 4. Firewall-Status
+echo "[4] Firewall"
+ufw status verbose 2>/dev/null || iptables -L -n | head -20
+
+# 5. Logging aktiv
+echo "[5] Logging"
+systemctl is-active rsyslog wazuh-agent 2>/dev/null
+
+# 6. Backup-Status
+echo "[6] Letztes Backup"
+ls -lt /backup/ | head -3
+
+echo ""
+echo "=== Check abgeschlossen ==="
+\end{lstlisting}
+
+\section{ISO 27001:2022 -- ISMS}
+
+\subsection{PDCA-Zyklus}
+
+\begin{table}[H]
+\centering
+\caption{ISO 27001 PDCA-Zyklus}
+\begin{tabular}{|c|l|p{8cm}|}
+\hline
+\rowcolor{primaryblue!20}
+\textbf{Phase} & \textbf{Name} & \textbf{Aktivitäten} \\
+\hline
+P & Plan & Risikobewertung, Sicherheitsziele, Maßnahmen planen \\
+\hline
+D & Do & Maßnahmen implementieren, Schulungen, Awareness \\
+\hline
+C & Check & Interne Audits, Management-Review, KPIs messen \\
+\hline
+A & Act & Korrekturmaßnahmen, Verbesserungen, Zertifizierung \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Risikobewertung nach ISO 27005}
+
+\begin{lstlisting}[language=python, caption=Risikobewertungs-Tool]
+class RiskAssessment:
+    def __init__(self):
+        self.risks = []
+
+    def add_risk(self, asset, threat, vulnerability,
+                 likelihood, impact):
+        """
+        likelihood: 1-5 (sehr unwahrscheinlich bis sehr wahrscheinlich)
+        impact: 1-5 (vernachlaessigbar bis katastrophal)
+        """
+        risk_score = likelihood * impact
+        risk_level = self._classify_risk(risk_score)
+
+        self.risks.append({
+            'asset': asset,
+            'threat': threat,
+            'vulnerability': vulnerability,
+            'likelihood': likelihood,
+            'impact': impact,
+            'risk_score': risk_score,
+            'risk_level': risk_level
+        })
+
+    def _classify_risk(self, score):
+        if score >= 15: return "KRITISCH"
+        elif score >= 10: return "HOCH"
+        elif score >= 5: return "MITTEL"
+        else: return "NIEDRIG"
+
+    def generate_report(self):
+        sorted_risks = sorted(
+            self.risks,
+            key=lambda x: x['risk_score'],
+            reverse=True
+        )
+        print(f"{'Asset':<20} {'Bedrohung':<25} {'Score':<8} {'Level'}")
+        print("-" * 70)
+        for r in sorted_risks:
+            print(f"{r['asset']:<20} {r['threat']:<25} "
+                  f"{r['risk_score']:<8} {r['risk_level']}")
+
+# Verwendung
+ra = RiskAssessment()
+ra.add_risk("Webserver", "SQL Injection", "Fehlende Validierung", 4, 5)
+ra.add_risk("AD-Server", "Brute Force", "Schwache Passwörter", 3, 5)
+ra.add_risk("Firewall", "DDoS", "Keine Rate-Limiting", 3, 4)
+ra.add_risk("Backup", "Ransomware", "Kein Offline-Backup", 2, 5)
+ra.generate_report()
+\end{lstlisting}
+
+\section{BSI IT-Grundschutz}
+
+\subsection{IT-Grundschutz Bausteine}
+
+\begin{table}[H]
+\centering
+\caption{Relevante BSI IT-Grundschutz Bausteine}
+\begin{tabular}{|l|l|l|}
+\hline
+\rowcolor{primaryblue!20}
+\textbf{Baustein} & \textbf{Titel} & \textbf{Priorität} \\
+\hline
+ORP.1 & Organisation & Hoch \\
+\hline
+ORP.2 & Personal & Hoch \\
+\hline
+ORP.4 & Identitäts- und Berechtigungsmanagement & Sehr hoch \\
+\hline
+CON.1 & Kryptokonzept & Hoch \\
+\hline
+CON.3 & Datensicherungskonzept & Sehr hoch \\
+\hline
+NET.1.1 & Netzarchitektur und -design & Sehr hoch \\
+\hline
+NET.3.2 & Firewall & Sehr hoch \\
+\hline
+SYS.1.1 & Allgemeiner Server & Hoch \\
+\hline
+SYS.2.1 & Allgemeiner Client & Hoch \\
+\hline
+DER.1 & Detektion von sicherheitsrelevanten Ereignissen & Sehr hoch \\
+\hline
+DER.2.1 & Behandlung von Sicherheitsvorfällen & Sehr hoch \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{BSI Grundschutz-Check Skript}
+
+\begin{lstlisting}[language=bash, caption=BSI Grundschutz Basis-Check]
+#!/bin/bash
+# bsi_check.sh -- BSI IT-Grundschutz Basis-Pruefung
+
+PASS=0; FAIL=0; WARN=0
+
+check() {
+  local desc=$1; local cmd=$2
+  if eval "$cmd" &>/dev/null; then
+    echo "  [PASS] $desc"; ((PASS++))
+  else
+    echo "  [FAIL] $desc"; ((FAIL++))
+  fi
+}
+
+echo "=== BSI IT-Grundschutz Check ==="
+
+echo ""
+echo "[ORP.4] Berechtigungsmanagement"
+check "Root-Login via SSH deaktiviert" \
+  "grep -q 'PermitRootLogin no' /etc/ssh/sshd_config"
+check "SSH Passwort-Auth deaktiviert" \
+  "grep -q 'PasswordAuthentication no' /etc/ssh/sshd_config"
+check "Leere Passwoerter verboten" \
+  "grep -q 'PermitEmptyPasswords no' /etc/ssh/sshd_config"
+
+echo ""
+echo "[NET.3.2] Firewall"
+check "UFW aktiv" "ufw status | grep -q 'Status: active'"
+check "Fail2Ban aktiv" "systemctl is-active fail2ban"
+
+echo ""
+echo "[DER.1] Detektion"
+check "Wazuh Agent aktiv" "systemctl is-active wazuh-agent"
+check "Auditd aktiv" "systemctl is-active auditd"
+check "Rsyslog aktiv" "systemctl is-active rsyslog"
+
+echo ""
+echo "[CON.3] Datensicherung"
+check "Backup vorhanden (< 7 Tage)" \
+  "find /backup -mtime -7 -name '*.tar.gz' | grep -q ."
+
+echo ""
+echo "=== Ergebnis: PASS=$PASS | FAIL=$FAIL | WARN=$WARN ==="
+\end{lstlisting}
+
+\section{Compliance-Dashboard mit Python}
+
+\begin{lstlisting}[language=python, caption=Compliance-Uebersicht generieren]
+import json
+from datetime import datetime
+
+compliance_status = {
+    "NIS2": {
+        "Risikomanagement": True,
+        "Incident Response Plan": True,
+        "MFA aktiviert": True,
+        "Verschluesselung TLS 1.3": True,
+        "24h Meldeprozess": False,
+        "Supply Chain Audit": False,
+        "Business Continuity Plan": True,
+    },
+    "ISO_27001": {
+        "ISMS dokumentiert": True,
+        "Risikobewertung": True,
+        "Internes Audit": False,
+        "Management Review": False,
+        "Awareness Schulung": True,
+    },
+    "BSI_Grundschutz": {
+        "Netzarchitektur dokumentiert": True,
+        "Firewall konfiguriert": True,
+        "Patch Management": True,
+        "Backup Konzept": True,
+        "Notfallkonzept": False,
+    }
+}
+
+print(f"Compliance-Report -- {datetime.now().strftime('%d.%m.%Y')}")
+print("=" * 50)
+
+total_pass = total_fail = 0
+for framework, checks in compliance_status.items():
+    passed = sum(1 for v in checks.values() if v)
+    failed = sum(1 for v in checks.values() if not v)
+    total = len(checks)
+    percent = (passed / total) * 100
+    total_pass += passed
+    total_fail += failed
+
+    print(f"\n{framework}: {passed}/{total} ({percent:.0f}%)")
+    for check, status in checks.items():
+        icon = "✅" if status else "❌"
+        print(f"  {icon} {check}")
+
+grand_total = total_pass + total_fail
+print(f"\n{'='*50}")
+print(f"GESAMT: {total_pass}/{grand_total} "
+      f"({(total_pass/grand_total)*100:.0f}%)")
+\end{lstlisting}

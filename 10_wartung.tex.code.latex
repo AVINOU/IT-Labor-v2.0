@@ -1,0 +1,203 @@
+\chapter{Wartung, Updates und Monitoring}
+
+\section{Ansible Patch-Management}
+
+\begin{lstlisting}[language=yaml, caption=Ansible Playbook -- Automatisches Patching]
+---
+# patch_management.yml
+- name: Automatisches Patch-Management
+  hosts: all
+  become: yes
+  vars:
+    reboot_required: false
+
+  tasks:
+    - name: Paketliste aktualisieren (Debian/Ubuntu)
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+
+    - name: Sicherheitsupdates installieren
+      apt:
+        upgrade: dist
+        autoremove: yes
+        autoclean: yes
+      when: ansible_os_family == "Debian"
+      register: apt_result
+
+    - name: Pruefen ob Neustart erforderlich
+      stat:
+        path: /var/run/reboot-required
+      register: reboot_file
+
+    - name: System neu starten (falls erforderlich)
+      reboot:
+        msg: "Neustart fuer Updates erforderlich"
+        reboot_timeout: 300
+      when: reboot_file.stat.exists
+
+    - name: Patch-Bericht generieren
+      debug:
+        msg: "Updates installiert: {{ apt_result.changed }}"
+\end{lstlisting}
+
+\begin{lstlisting}[language=bash, caption=Ansible Inventory und Ausfuehren]
+# Inventory erstellen
+cat > /etc/ansible/hosts << EOF
+[servers]
+10.0.30.10 ansible_user=admin
+10.0.30.11 ansible_user=admin
+10.0.20.10 ansible_user=admin
+
+[dmz]
+10.0.10.5 ansible_user=admin
+10.0.10.6 ansible_user=admin
+
+[all:vars]
+ansible_ssh_private_key_file=~/.ssh/lab_key
+EOF
+
+# Playbook ausfuehren
+ansible-playbook patch_management.yml --check  # Dry-Run
+ansible-playbook patch_management.yml -v       # Ausfuehren
+\end{lstlisting}
+
+\section{Prometheus und Grafana Monitoring}
+
+\begin{lstlisting}[language=yaml, caption=Prometheus Docker Compose]
+version: '3.8'
+services:
+  prometheus:
+    image: prom/prometheus:v2.50.0
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:10.3.0
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=SecureGrafana!
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_DOMAIN=10.0.20.10
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
+    ports:
+      - "3000:3000"
+
+  node-exporter:
+    image: prom/node-exporter:v1.7.0
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+    ports:
+      - "9100:9100"
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml
+    ports:
+      - "9093:9093"
+
+volumes:
+  prometheus_data:
+  grafana_data:
+\end{lstlisting}
+
+\begin{lstlisting}[language=yaml, caption=Prometheus Alerting Regeln]
+# alert_rules.yml
+groups:
+  - name: security_alerts
+    rules:
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total
+          {mode="idle"}[5m])) * 100) > 90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Hohe CPU-Last auf {{ $labels.instance }}"
+          description: "CPU > 90% seit 5 Minuten"
+
+      - alert: DiskSpaceLow
+        expr: (node_filesystem_avail_bytes / node_filesystem_size_bytes)
+          * 100 < 10
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Wenig Speicherplatz auf {{ $labels.instance }}"
+
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Dienst ausgefallen: {{ $labels.job }}"
+\end{lstlisting}
+
+\section{Backup-Strategie nach 3-2-1-Regel}
+
+\begin{table}[H]
+\centering
+\caption{3-2-1 Backup-Strategie}
+\begin{tabular}{|c|l|p{7cm}|}
+\hline
+\rowcolor{primaryblue!20}
+\textbf{Regel} & \textbf{Bedeutung} & \textbf{Umsetzung im Labor} \\
+\hline
+3 & 3 Kopien der Daten & Original + 2 Backups \\
+\hline
+2 & 2 verschiedene Medien & SSD + NAS \\
+\hline
+1 & 1 Offsite-Kopie & Cloud-Backup (S3/Azure Blob) \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{lstlisting}[language=bash, caption=Automatisiertes Backup-Skript]
+#!/bin/bash
+# backup.sh -- Automatisiertes Backup
+
+BACKUP_DIR="/backup/$(date +%Y%m%d)"
+LOG_FILE="/var/log/backup.log"
+S3_BUCKET="s3://lab-backups-xsikom"
+
+mkdir -p $BACKUP_DIR
+
+echo "[$(date)] Backup gestartet" >> $LOG_FILE
+
+# Konfigurationsdateien sichern
+tar -czf $BACKUP_DIR/configs.tar.gz \
+  /etc/nginx/ /etc/suricata/ /etc/wazuh/ \
+  /opt/zeek/etc/ 2>> $LOG_FILE
+
+# Datenbanken sichern
+mysqldump --all-databases -u root -p"$DB_PASS" \
+  > $BACKUP_DIR/databases.sql 2>> $LOG_FILE
+
+# Hash-Werte berechnen
+sha256sum $BACKUP_DIR/* > $BACKUP_DIR/checksums.sha256
+
+# In Cloud hochladen
+aws s3 sync $BACKUP_DIR $S3_BUCKET/$(date +%Y%m%d)/ \
+  --sse AES256 >> $LOG_FILE 2>&1
+
+# Alte Backups loeschen (>30 Tage)
+find /backup/ -mtime +30 -exec rm -rf {} \;
+
+echo "[$(date)] Backup abgeschlossen" >> $LOG_FILE
+\end{lstlisting}

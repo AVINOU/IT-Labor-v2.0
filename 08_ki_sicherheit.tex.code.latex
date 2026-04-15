@@ -1,0 +1,164 @@
+\chapter{KI-gestützte Sicherheit und Anomalieerkennung}
+
+\section{Machine Learning für Anomalieerkennung}
+
+\subsection{IsolationForest -- Netzwerk-Anomalieerkennung}
+
+\begin{lstlisting}[language=python, caption=ML Anomalieerkennung mit IsolationForest]
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import IsolationForest
+from sklearn.preprocessing import StandardScaler
+import json
+
+# Zeek-Logs einlesen
+logs = []
+with open('/opt/zeek/logs/current/conn.log', 'r') as f:
+    for line in f:
+        if not line.startswith('#'):
+            logs.append(json.loads(line))
+
+df = pd.DataFrame(logs)
+
+# Features extrahieren
+features = df[['duration', 'orig_bytes', 'resp_bytes',
+                'orig_pkts', 'resp_pkts']].fillna(0)
+
+# Normalisieren
+scaler = StandardScaler()
+X = scaler.fit_transform(features)
+
+# IsolationForest trainieren
+model = IsolationForest(
+    n_estimators=100,
+    contamination=0.01,
+    random_state=42
+)
+df['anomaly'] = model.fit_predict(X)
+
+# Anomalien ausgeben
+anomalies = df[df['anomaly'] == -1]
+print(f"Gefundene Anomalien: {len(anomalies)}")
+print(anomalies[['id.orig_h', 'id.resp_h', 'proto',
+                  'orig_bytes', 'resp_bytes']].head(20))
+\end{lstlisting}
+
+\section{Wazuh ML -- Baseline und Anomalien}
+
+\begin{lstlisting}[language=bash, caption=Wazuh ML-Analyse aktivieren]
+# Wazuh ML-Modul konfigurieren
+nano /var/ossec/etc/ossec.conf
+
+# <wodle name="syscollector">
+#   <disabled>no</disabled>
+#   <interval>1h</interval>
+#   <os>yes</os>
+#   <hardware>yes</hardware>
+#   <packages>yes</packages>
+#   <network>yes</network>
+#   <ports all="no">yes</ports>
+#   <processes>yes</processes>
+# </wodle>
+
+# Anomalie-Regeln aktivieren
+nano /var/ossec/etc/rules/local_rules.xml
+# <rule id="100010" level="12">
+#   <if_sid>31530</if_sid>
+#   <description>ML: Ungewoehnliche Anmeldezeit erkannt</description>
+#   <mitre><id>T1078</id></mitre>
+# </rule>
+
+systemctl restart wazuh-manager
+\end{lstlisting}
+
+\section{LLM-Integration für Security Operations}
+
+\begin{lstlisting}[language=python, caption=LLM für Log-Analyse]
+import openai
+import json
+
+client = openai.OpenAI(api_key="sk-...")
+
+def analyze_security_log(log_entry: dict) -> str:
+    prompt = f"""
+    Analysiere diesen Sicherheits-Log-Eintrag und erklaere:
+    1. Was ist passiert?
+    2. Wie kritisch ist das Ereignis? (1-10)
+    3. Welche MITRE ATT&CK Technik koennte das sein?
+    4. Empfohlene Massnahmen?
+
+    Log: {json.dumps(log_entry, indent=2)}
+    """
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system",
+             "content": "Du bist ein erfahrener SOC-Analyst."},
+            {"role": "user", "content": prompt}
+        ]
+    )
+    return response.choices[0].message.content
+
+# Beispiel-Log analysieren
+sample_log = {
+    "timestamp": "2026-04-15T14:23:11",
+    "event": "Failed SSH login",
+    "source_ip": "185.220.101.45",
+    "attempts": 47,
+    "username": "root"
+}
+result = analyze_security_log(sample_log)
+print(result)
+\end{lstlisting}
+
+\section{UEBA -- User and Entity Behavior Analytics}
+
+\begin{lstlisting}[language=python, caption=UEBA mit Python]
+import pandas as pd
+from datetime import datetime, timedelta
+from collections import defaultdict
+
+class UEBAAnalyzer:
+    def __init__(self):
+        self.user_baselines = defaultdict(dict)
+
+    def build_baseline(self, login_logs: pd.DataFrame):
+        """Erstellt Baseline fuer normales Benutzerverhalten"""
+        for user, group in login_logs.groupby('username'):
+            hours = pd.to_datetime(group['timestamp']).dt.hour
+            self.user_baselines[user] = {
+                'normal_hours': hours.value_counts().head(5).index.tolist(),
+                'normal_ips': group['source_ip'].value_counts().head(3).index.tolist(),
+                'avg_daily_logins': len(group) / 30
+            }
+
+    def detect_anomaly(self, event: dict) -> dict:
+        """Erkennt Abweichungen vom normalen Verhalten"""
+        user = event['username']
+        baseline = self.user_baselines.get(user, {})
+        alerts = []
+
+        # Ungewoehnliche Uhrzeit
+        hour = datetime.fromisoformat(event['timestamp']).hour
+        if hour not in baseline.get('normal_hours', list(range(8, 18))):
+            alerts.append(f"Login ausserhalb normaler Zeiten: {hour}:00 Uhr")
+
+        # Neue IP-Adresse
+        if event['source_ip'] not in baseline.get('normal_ips', []):
+            alerts.append(f"Login von unbekannter IP: {event['source_ip']}")
+
+        return {
+            'user': user,
+            'risk_score': len(alerts) * 3,
+            'alerts': alerts
+        }
+
+# Verwendung
+analyzer = UEBAAnalyzer()
+result = analyzer.detect_anomaly({
+    'username': 'jdoe',
+    'timestamp': '2026-04-15T03:15:00',
+    'source_ip': '185.220.101.45'
+})
+print(result)
+\end{lstlisting}
